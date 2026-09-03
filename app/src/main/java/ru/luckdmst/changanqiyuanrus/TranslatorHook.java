@@ -10,6 +10,8 @@ import android.graphics.Paint;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -17,6 +19,7 @@ import android.webkit.WebView;
 import android.widget.ImageView;
 import android.widget.PopupWindow;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -28,9 +31,11 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
@@ -55,12 +60,15 @@ public final class TranslatorHook implements IXposedHookLoadPackage {
     private static final Map<String, String> CACHE = new ConcurrentHashMap<>();
     private static final Map<String, CopyOnWriteArrayList<PendingText>> WAITING =
             new ConcurrentHashMap<>();
+    private static final Map<Toast, String> TOAST_SOURCES =
+            Collections.synchronizedMap(new WeakHashMap<>());
     private static final Set<String> WEB_TRANSLATING = ConcurrentHashMap.newKeySet();
     private static final Set<String> WHEEL_TRANSLATING = ConcurrentHashMap.newKeySet();
     private static final Set<String> DRAW_TRANSLATING = ConcurrentHashMap.newKeySet();
     private static final Set<Class<?>> HOOKED_WHEEL_CLASSES = ConcurrentHashMap.newKeySet();
     private static final ThreadLocal<Boolean> APPLYING_TRANSLATION = new ThreadLocal<>();
     private static final ThreadLocal<Boolean> APPLYING_IMAGE_REPLACEMENT = new ThreadLocal<>();
+    private static final ThreadLocal<Boolean> SHOWING_TRANSLATED_TOAST = new ThreadLocal<>();
     private static volatile WeakReference<View> CURRENT_ROOT = new WeakReference<>(null);
 
     @Override
@@ -73,12 +81,16 @@ public final class TranslatorHook implements IXposedHookLoadPackage {
             XposedBridge.hookAllMethods(TextView.class, "setHint", textHook(true));
             XposedBridge.hookAllMethods(Activity.class, "onResume", activityScanHook());
             XposedBridge.hookAllMethods(Activity.class, "onWindowFocusChanged", activityScanHook());
+            XposedBridge.hookAllMethods(View.class, "performClick", profileSaveHook());
             XposedBridge.hookAllMethods(Dialog.class, "show", dialogScanHook());
             XposedBridge.hookAllMethods(PopupWindow.class, "showAtLocation", popupScanHook());
             XposedBridge.hookAllMethods(PopupWindow.class, "showAsDropDown", popupScanHook());
             XposedBridge.hookAllMethods(ImageView.class, "setImageDrawable", imageSetterHook());
             XposedBridge.hookAllMethods(ImageView.class, "setImageBitmap", imageSetterHook());
             XposedBridge.hookAllMethods(ImageView.class, "setImageResource", imageSetterHook());
+            XposedBridge.hookAllMethods(Toast.class, "makeText", toastFactoryHook());
+            XposedBridge.hookAllMethods(Toast.class, "setText", toastTextHook());
+            XposedBridge.hookAllMethods(Toast.class, "show", toastShowHook());
             XposedBridge.hookAllMethods(Canvas.class, "drawText", canvasTextHook());
             installWheelViewHook(lpparam.classLoader);
             Log.i(TAG, "Dynamic TextView, Activity and Dialog scan hooks installed");
@@ -95,6 +107,48 @@ public final class TranslatorHook implements IXposedHookLoadPackage {
                 scheduleActivityScan(activity, 0);
                 scheduleActivityScan(activity, 350);
                 scheduleActivityScan(activity, 1500);
+            }
+        };
+    }
+
+    private static XC_MethodHook profileSaveHook() {
+        return new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                View clicked = (View) param.thisObject;
+                if (!hasResourceEntryName(clicked, "bar_tv_other")) return;
+                try {
+                    int sexId = clicked.getResources().getIdentifier(
+                            "tvsex", "id", TARGET_PACKAGE);
+                    View candidate = sexId == 0 ? null : clicked.getRootView().findViewById(sexId);
+                    if (!(candidate instanceof TextView)) return;
+                    TextView sexView = (TextView) candidate;
+                    String displayed = sexView.getText().toString().trim();
+                    String raw = "Мужской".equals(displayed) ? "男"
+                            : "Женский".equals(displayed) ? "女" : null;
+                    if (raw == null) return;
+
+                    param.setObjectExtra("qiyuanSexView", sexView);
+                    param.setObjectExtra("qiyuanSexDisplay", displayed);
+                    APPLYING_TRANSLATION.set(true);
+                    sexView.setText(raw);
+                } catch (Throwable t) {
+                    APPLYING_TRANSLATION.remove();
+                    Log.w(TAG, "Unable to restore raw gender before save", t);
+                }
+            }
+
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                Object candidate = param.getObjectExtra("qiyuanSexView");
+                Object displayed = param.getObjectExtra("qiyuanSexDisplay");
+                if (candidate instanceof TextView && displayed instanceof String) {
+                    try {
+                        ((TextView) candidate).setText((String) displayed);
+                    } finally {
+                        APPLYING_TRANSLATION.remove();
+                    }
+                }
             }
         };
     }
@@ -147,6 +201,102 @@ public final class TranslatorHook implements IXposedHookLoadPackage {
                 }
             }
         };
+    }
+
+    private static XC_MethodHook toastFactoryHook() {
+        return new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                Object result = param.getResult();
+                if (!(result instanceof Toast) || param.args.length < 2) return;
+                String source = resolveToastText(param.args[0], param.args[1]);
+                if (source != null && containsChinese(source)) {
+                    TOAST_SOURCES.put((Toast) result, source);
+                }
+            }
+        };
+    }
+
+    private static XC_MethodHook toastTextHook() {
+        return new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                if (Boolean.TRUE.equals(SHOWING_TRANSLATED_TOAST.get()) || param.args.length == 0) return;
+                String source = resolveToastText(((Toast) param.thisObject).getView() == null
+                        ? null : ((Toast) param.thisObject).getView().getContext(), param.args[0]);
+                if (source != null && containsChinese(source)) {
+                    TOAST_SOURCES.put((Toast) param.thisObject, source);
+                }
+            }
+        };
+    }
+
+    private static XC_MethodHook toastShowHook() {
+        return new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                if (Boolean.TRUE.equals(SHOWING_TRANSLATED_TOAST.get())) return;
+                Toast toast = (Toast) param.thisObject;
+                String source = TOAST_SOURCES.remove(toast);
+                if (source == null || !containsChinese(source)) return;
+
+                String translated = contextualOverride(source);
+                if (translated == null) translated = CACHE.get(source);
+                if (translated != null) {
+                    setToastText(toast, translated);
+                    return;
+                }
+
+                param.setResult(null);
+                queueToastTranslation(toast, source);
+            }
+        };
+    }
+
+    private static String resolveToastText(Object contextObject, Object value) {
+        try {
+            if (value instanceof CharSequence) return value.toString().trim();
+            if (value instanceof Integer && contextObject instanceof Context) {
+                return ((Context) contextObject).getText((Integer) value).toString().trim();
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static void setToastText(Toast toast, String text) {
+        SHOWING_TRANSLATED_TOAST.set(true);
+        try {
+            toast.setText(text);
+            toast.setDuration(Toast.LENGTH_LONG);
+        } finally {
+            SHOWING_TRANSLATED_TOAST.remove();
+        }
+    }
+
+    private static void queueToastTranslation(Toast toast, String source) {
+        TRANSLATION_EXECUTOR.execute(() -> {
+            String translated = null;
+            try {
+                translated = requestGoogleTranslation(source);
+                if (translated != null && !translated.isEmpty()) {
+                    if (CACHE.size() >= MAX_CACHE_SIZE) CACHE.clear();
+                    CACHE.put(source, translated);
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "Toast translation failed for " + abbreviate(source), t);
+            }
+            final String result = translated == null || translated.isEmpty() ? source : translated;
+            new Handler(Looper.getMainLooper()).post(() -> {
+                setToastText(toast, result);
+                SHOWING_TRANSLATED_TOAST.set(true);
+                try {
+                    toast.show();
+                } finally {
+                    SHOWING_TRANSLATED_TOAST.remove();
+                }
+            });
+        });
     }
 
     private static void scheduleActivityScan(Activity activity, long delayMs) {
@@ -433,6 +583,13 @@ public final class TranslatorHook implements IXposedHookLoadPackage {
         if ("未填写".equals(source)) return "Не заполнено";
         if ("取消".equals(source)) return "Отмена";
         if ("确定".equals(source)) return "Готово";
+        if ("保存成功".equals(source) || "修改成功".equals(source)) return "Изменения сохранены";
+        if ("保存失败".equals(source) || "修改失败".equals(source)) return "Не удалось сохранить";
+        if ("操作成功".equals(source)) return "Готово";
+        if ("操作失败".equals(source)) return "Операция не выполнена";
+        if ("网络异常".equals(source) || "网络错误".equals(source)) return "Ошибка сети";
+        if ("请求失败".equals(source)) return "Ошибка запроса";
+        if ("请稍后重试".equals(source)) return "Повторите позже";
         if ("选择地址".equals(source) || "请选择地址".equals(source)) return "Выберите адрес";
         if ("昵称".equals(source) || "Никнейм".equals(source)) return "Ник";
         if ("最长8个汉字".equals(source)) return "Не более 8 символов";
