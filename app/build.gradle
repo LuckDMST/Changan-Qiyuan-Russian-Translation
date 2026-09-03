@@ -1,0 +1,20 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'ru.luckdmst.changanqiyuanrus'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'ru.luckdmst.changanqiyuanrus'
+        minSdk 26
+        targetSdk 28
+        versionCode 13
+        versionName '2.2.6'
+    }
+}
+
+dependencies {
+    compileOnly 'de.robv.android.xposed:api:82'
+}
