@@ -583,6 +583,9 @@ public final class TranslatorHook implements IXposedHookLoadPackage {
         if ("未填写".equals(source)) return "Не заполнено";
         if ("取消".equals(source)) return "Отмена";
         if ("确定".equals(source)) return "Готово";
+        if ("温馨提示".equals(source)) return "Совет";
+        if ("知道".equals(source)) return "Понятно";
+        if ("知道了".equals(source) || "了解".equals(source) || "了解了".equals(source)) return "Понятно";
         if ("保存成功".equals(source) || "修改成功".equals(source)) return "Изменения сохранены";
         if ("保存失败".equals(source) || "修改失败".equals(source)) return "Не удалось сохранить";
         if ("操作成功".equals(source)) return "Готово";

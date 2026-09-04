@@ -56,15 +56,31 @@ com.changan.oushangCos1
 
 ## Что потребуется
 
-Проверенная конфигурация:
+### Для работы модуля
 
 - Android-устройство с root-доступом через Magisk;
 - включённый Zygisk;
 - установленный и работающий LSPosed;
+- Android 8.0 или новее, так как минимальная версия модуля указана как API 26;
 - оригинальное приложение Changan Qiyuan с пакетом
   `com.changan.oushangCos1`;
 - APK этого модуля из раздела [Releases](https://github.com/LuckDMST/Changan-Qiyuan-Russian-LSPosed/releases);
-- доступ в интернет для перевода новых строк через Google Translate.
+- доступ в интернет по HTTPS к `translate.googleapis.com` для новых строк.
+
+Приложение Google Переводчик отдельно устанавливать не требуется. Модуль
+сам отправляет видимые китайские строки в Google Translate и получает перевод.
+
+### Для сборки из исходников
+
+- JDK 17;
+- Android SDK Platform 35;
+- Android SDK Build Tools 35;
+- Gradle 8.7, который указан в Gradle Wrapper;
+- Android Gradle Plugin 8.5.2;
+- Xposed API 82, загружаемый из репозитория `api.xposed.info`;
+- доступ в интернет при первой сборке для загрузки Gradle-плагина и Xposed API.
+
+Android Studio для сборки не требуется.
 
 Получение root-доступа зависит от устройства и может привести к потере данных.
 Используйте [официальную инструкцию Magisk](https://github.com/topjohnwu/Magisk/blob/master/docs/install.md).
