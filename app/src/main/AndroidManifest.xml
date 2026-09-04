@@ -4,7 +4,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="Changan Qiyuan — Русский"
+        android:label="Changan Qiyuan - Русский"
         android:theme="@style/AppTheme">
         <meta-data
             android:name="xposedmodule"
@@ -15,5 +15,8 @@
         <meta-data
             android:name="xposedminversion"
             android:value="82" />
+        <meta-data
+            android:name="xposedscope"
+            android:value="com.changan.oushangCos1" />
     </application>
 </manifest>
