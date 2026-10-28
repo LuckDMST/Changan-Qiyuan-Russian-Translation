@@ -1,9 +1,10 @@
 {
   "schema": 1,
-  "catalogVersion": 4,
+  "catalogVersion": 5,
   "catalogDate": "2026-10-28",
   "sha256": "b5477aedfd9d04396e29bfdac43c0b14d154a955f5ef0523b425e64ffa72b279",
   "translations": {
+ "遥控挪泊": "Подвинуть",
  "钥匙管理": "Ключи",
  "钥匙未连接": "Нет связи",
  "遥控泊车": "Парковка",
